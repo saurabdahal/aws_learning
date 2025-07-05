@@ -1,5 +1,7 @@
 import os,sys
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from boto3.s3.transfer import TransferConfig, MB, KB
 
 import boto3
@@ -29,7 +31,7 @@ class FileManager:
         # Since default threshold is larger than our filesize we will use smaller threshold to force
         # boto3 to use multipart. We will use 100KB chunk size
         transfer_config = TransferConfig(
-            multipart_threshold=100 * MB,
+            multipart_threshold=100 * KB,
             multipart_chunksize=100 * KB
         )
         try:
@@ -48,3 +50,33 @@ class FileManager:
             print(etag)
         except Exception as e:
             print(f"Error: {e.args}")
+
+    def upload_directory(self, max_workers: int = 4):
+
+        files_list = []
+        for root, _, files in os.walk(self.data_dir):
+            for f in files:
+                files_list.append(os.path.join(root, f))
+
+        if not files_list:
+            print(f" No files in {self.data_dir} ?")
+            return
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self.upload_single_file, os.path.relpath(path, self.data_dir)): path
+                for path in files_list
+            }
+
+            """
+                We use as_completed() here for futures. It is an iterator over the given futures that yields each as it
+                completes. [Doc]. as_completed() takes a list (or any iterable) of Future objects and returns an 
+                iterator that yields each future as soon as it finishes, in no particular order. 
+            """
+            for future in as_completed(futures):
+                src_path = futures[future]
+                try:
+                    future.result()
+                    print(f"Uploaded: {src_path}")
+                except Exception as e:
+                    print(f"Failed to upload {src_path}: {e}")
