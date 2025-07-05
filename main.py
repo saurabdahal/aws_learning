@@ -1,5 +1,6 @@
 from s3.BucketManager import BucketManager
+from s3.FileManager import FileManager
 
 if __name__ == '__main__':
-    BucketManager().create_bucket(region="us-east-2")
+    FileManager().upload_single_file('annual-enterprise.csv')
 
