@@ -1,9 +1,9 @@
-import os,sys
+import os, sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from botocore.exceptions import ClientError
 
 from boto3.s3.transfer import TransferConfig, MB, KB
-
 import boto3
 
 
@@ -80,3 +80,67 @@ class FileManager:
                     print(f"Uploaded: {src_path}")
                 except Exception as e:
                     print(f"Failed to upload {src_path}: {e}")
+
+    def create_s3_lifecycle_config(self):
+        rules = [self.s3_lifecycle_expire_objects_config(), self.s3_lifecycle_expire_nonversioned_config()]
+        config = {
+            "Rules": rules
+        }
+
+        return config
+
+    def apply_s3_lifecycle_configuration(self, lifecycle_configuration=None):
+        if lifecycle_configuration is None:
+            lifecycle_configuration = self.create_s3_lifecycle_config()
+
+        try:
+            self.s3.put_bucket_lifecycle_configuration(
+                Bucket=self.bucket_name,
+                LifecycleConfiguration=lifecycle_configuration
+            )
+        except ClientError as e:
+            print(f"Error: {e}")
+
+    def s3_lifecycle_expire_objects_config(self, days=3, prefix=None):
+        if prefix is None:
+            prefix = self.bucket_name
+        return {
+            'ID': f'DeleteUploadsAfter{days}Days',
+            'Filter': {'Prefix': prefix},
+            'Status': 'Enabled',
+            'Expiration': {'Days': days},
+        }
+
+    def s3_lifecycle_expire_nonversioned_config(self, days=3, prefix=None):
+        if prefix is None:
+            prefix = self.bucket_name
+
+            return {
+                'ID': 'ExpireNonVersioned',
+                'Filter': {},
+                'Status': 'Enabled',
+                'NoncurrentVersionExpiration': {
+                    'NoncurrentDays': days
+                },
+            }
+
+    def delete_rule_by_id(self, rule_id):
+        new_rules = []
+        try:
+            resp = self.s3.get_bucket_lifecycle_configuration(Bucket=self.bucket_name)
+            rules = resp['Rules']
+            new_rules = [r for r in rules if r.get('ID') != rule_id]
+
+            if len(new_rules) == len(rules):
+                print(f"Rule '{rule_id}' not found")
+                return
+
+            if new_rules:
+                self.s3.put_bucket_lifecycle_configuration(
+                    Bucket=self.bucket_name,
+                    LifecycleConfiguration={'Rules': new_rules}
+                )
+            else:
+                self.s3.delete_bucket_lifecycle(Bucket=self.bucket_name)
+        except ClientError as e:
+            print(f"Error: {e}")
